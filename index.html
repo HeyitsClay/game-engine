@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0f">
+    <title>Go-DJ Command Interface</title>
+    <link rel="stylesheet" href="style.css?v=24">
+</head>
+<body>
+    <div class="app" id="mainApp">
+        <!-- Top Menu Bar -->
+        <div class="top-bar">
+            <div class="top-bar-main">
+                <button class="btn-reset-soft" id="btnResetSoft" title="Reset Turn">↺</button>
+                <button class="btn-reset" id="btnReset" title="Reset All">↻</button>
+                <div class="player-name">Player Name</div>
+                
+                <!-- Resources Container -->
+                <div class="resources-container" id="resourcesContainer">
+                    <!-- Resources will be added here dynamically -->
+                </div>
+                
+                <div class="top-bar-actions">
+                    <button class="btn-add" id="btnAddResource" title="Add Resource">+</button>
+                    <button class="btn-clipboard" id="btnExport" title="Export Game State">📋</button>
+                    <button class="btn-settings" id="btnSettings" title="Settings">⚙️</button>
+                    <button class="btn-end-turn" id="btnEndTurn">End Turn</button>
+                    <div class="turn-counter">Turn: <span id="turnValue">1</span></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main Content - 3 Column Layout -->
+        <div class="main-content">
+            <!-- Left: Stats -->
+            <div class="section stats-section">
+                <div class="section-header">
+                    <h2>Stats</h2>
+                    <button class="btn-section-add" id="btnAddStat" title="Add Stat">+</button>
+                </div>
+                <div class="section-content" id="statsContainer">
+                    <!-- Stats will be added here -->
+                </div>
+            </div>
+            
+            <!-- Center: Activity Log + Narrative + Cards Area -->
+            <div class="section center-section">
+                <div class="log-narrative-container">
+                    <div class="activity-log-wrapper">
+                        <div class="section-header">
+                            <h2>Activity Log</h2>
+                        </div>
+                        <div class="activity-log" id="activityLog">
+                            <!-- Turn messages appear here -->
+                            <div class="turn-message">
+                                <span class="turn-label">Day 1</span>
+                                <span class="turn-text">A new day begins...</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="narrative-wrapper">
+                        <div class="section-header">
+                            <h2>Narrative</h2>
+                            <button class="btn-section-add" id="btnAddNarrative" title="Open Narrative Editor">+</button>
+                        </div>
+                        <div class="narrative-area" id="narrativeArea">
+                            <!-- Narrative text will appear here -->
+                        </div>
+                    </div>
+                </div>
+                <div class="cards-area">
+                    <div class="cards-area-header">
+                        <h3>Available Cards</h3>
+                        <button class="btn-section-add" id="btnAddCard" title="Open Card Deck">+</button>
+                    </div>
+                    <div class="cards-grid" id="cardsContainer">
+                        <!-- Action cards will be added here -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right: Buffs -->
+            <div class="section buffs-section">
+                <div class="section-header">
+                    <h2>Buffs</h2>
+                    <button class="btn-section-add" id="btnAddBuff" title="Open Buff Collection">+</button>
+                </div>
+                <div class="section-content" id="buffsContainer">
+                    <!-- Buffs will be added here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Deck Editor (Full Page Overlay) -->
+    <div class="deck-editor" id="deckEditor">
+        <div class="deck-editor-header">
+            <h2 id="deckEditorTitle">Card Collection</h2>
+            <button class="deck-editor-close" id="btnCloseDeckEditor">&times;</button>
+        </div>
+        <div class="deck-editor-layout">
+            <!-- Left: Collection Grid -->
+            <div class="deck-collection-area">
+                <div class="deck-grid" id="deckGrid">
+                    <!-- Cards/Buffs in collection -->
+                </div>
+                <button class="deck-add-btn" id="btnAddToCollection">
+                    <span class="deck-add-icon">+</span>
+                    <span>Add New</span>
+                </button>
+            </div>
+            
+            <!-- Right: Edit Form -->
+            <div class="deck-edit-area" id="deckEditArea">
+                <div class="deck-edit-content" id="deckEditContent">
+                    <h3 id="deckEditTitle">Add New Card</h3>
+                    
+                    <div class="deck-edit-form">
+                        <input type="hidden" id="editId" value="">
+                        <input type="hidden" id="editType" value="card">
+                        
+                        <!-- Basic Info -->
+                        <div class="form-section">
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="resName">Name</label>
+                                    <input type="text" id="resName" placeholder="e.g., Work Overtime">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="resDesc">Description</label>
+                                    <input type="text" id="resDesc" placeholder="What does this do?">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trigger Section (Unified for Cards & Buffs) -->
+                        <div class="form-section trigger-section">
+                            <label class="section-label">When does this appear?</label>
+                            
+                            <!-- Trigger Logic Selector -->
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <select id="triggerLogic">
+                                        <option value="all">ALL conditions must be met</option>
+                                        <option value="any">ANY condition must be met</option>
+                                        <option value="custom">Custom (e.g., 2 of 3)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="triggerCustomGroup" style="flex: 1; display: none;">
+                                    <input type="number" id="triggerCustomValue" placeholder="2" min="1" value="2">
+                                    <span class="field-hint">of <span id="triggerCustomTotal">0</span></span>
+                                </div>
+                            </div>
+                            
+                            <!-- Trigger Conditions Container -->
+                            <div id="triggerConditionsContainer">
+                            </div>
+                            <button type="button" class="btn-add-row" id="btnAddTriggerCondition">+ Add Condition</button>
+                        </div>
+                        
+                        <!-- Duration (Buffs only) -->
+                        <div class="form-section" id="durationSection" style="display: none;">
+                            <label class="section-label">Duration</label>
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <input type="number" id="buffDuration" placeholder="0" min="0" value="0">
+                                </div>
+                                <div class="form-group checkbox-group" style="flex: 2;">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="buffOneTime">
+                                        <span>One-time (once triggered, never shows again)</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <span class="field-hint">0 = permanent, 1+ = number of turns</span>
+                        </div>
+                        
+                        <!-- Card Costs Section -->
+                        <div class="form-section costs-section" id="cardCostsSection" style="display: none;">
+                            <label class="section-label">Costs (paid when played)</label>
+                            <div id="cardCostsContainer">
+                            </div>
+                            <button type="button" class="btn-add-row" id="btnAddCardCost">+ Add Cost</button>
+                        </div>
+                        
+                        <!-- Effects Section -->
+                        <div class="form-section effects-section">
+                            <label class="section-label">Effects</label>
+                            
+                            <!-- Card Effects -->
+                            <div id="cardEffectsContainer" style="display: none;">
+                            </div>
+                            <button type="button" class="btn-add-row" id="btnAddCardEffect" style="display: none;">+ Add Effect</button>
+                            
+                            <!-- Buff Effects -->
+                            <div id="buffEffectsContainer" style="display: none;">
+                            </div>
+                            <button type="button" class="btn-add-row" id="btnAddBuffEffect" style="display: none;">+ Add Effect</button>
+                        </div>
+                    </div>
+                    
+                    <div class="deck-edit-actions">
+                        <button type="button" class="btn-primary" id="btnSave">Add</button>
+                        <button type="button" class="btn-primary" id="btnUpdate" style="display: none;">Update</button>
+                        <button type="button" class="btn-danger" id="btnDelete" style="display: none;">Delete</button>
+                        <button type="button" class="btn-secondary" id="btnCancelEdit">Cancel</button>
+                    </div>
+                </div>
+                <div class="deck-edit-placeholder" id="deckEditPlaceholder">
+                    <div class="placeholder-content">
+                        <div class="placeholder-icon">+</div>
+                        <p>Select an item to edit or click "Add New" to create one</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Narrative Editor (Full Page Overlay) -->
+    <div class="deck-editor narrative-editor" id="narrativeEditor">
+        <div class="deck-editor-header">
+            <h2>Narrative Editor</h2>
+            <button class="deck-editor-close" id="btnCloseNarrativeEditor">&times;</button>
+        </div>
+        <div class="deck-editor-layout">
+            <!-- Left: Narrative List -->
+            <div class="deck-collection-area">
+                <div class="deck-grid" id="narrativeGrid">
+                    <!-- Narratives will appear here -->
+                </div>
+                <button class="deck-add-btn" id="btnAddToNarratives">
+                    <span class="deck-add-icon">+</span>
+                    <span>Add New Narrative</span>
+                </button>
+            </div>
+            
+            <!-- Right: Edit Form -->
+            <div class="deck-edit-area" id="narrativeEditArea">
+                <div class="deck-edit-content" id="narrativeEditContent">
+                    <h3 id="narrativeEditTitle">Add New Narrative</h3>
+                    
+                    <div class="deck-edit-form">
+                        <input type="hidden" id="narrativeEditId" value="">
+                        
+                        <!-- Basic Info -->
+                        <div class="form-section">
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="narrativeName">Name</label>
+                                    <input type="text" id="narrativeName" placeholder="e.g., Welcome Message">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="narrativeText">Narrative Text</label>
+                                    <textarea id="narrativeText" rows="4" placeholder="What story text should display?"></textarea>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group checkbox-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="narrativeRepeatable">
+                                        <span>Repeatable (can show multiple times)</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Trigger Section (Shared Component) -->
+                        <div class="form-section trigger-section" id="narrativeTriggerSection">
+                            <label class="section-label">When should this appear?</label>
+                            
+                            <!-- Trigger Logic Selector -->
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <select id="narrativeTriggerLogic">
+                                        <option value="all">ALL conditions must be met</option>
+                                        <option value="any">ANY condition must be met</option>
+                                        <option value="custom">Custom (e.g., 2 of 3)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="narrativeTriggerCustomGroup" style="flex: 1; display: none;">
+                                    <input type="number" id="narrativeTriggerCustomValue" placeholder="e.g., 2" min="1">
+                                    <span class="input-suffix">of <span id="narrativeTriggerCustomTotal">0</span> conditions</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Trigger Conditions Container -->
+                            <div id="narrativeTriggerConditionsContainer"></div>
+                            <button type="button" class="btn-add-row" id="btnAddNarrativeTrigger">+ Add Condition</button>
+                        </div>
+                    </div>
+                    
+                    <div class="deck-edit-actions">
+                        <button type="button" class="btn-primary" id="btnSaveNarrative">Save Narrative</button>
+                        <button type="button" class="btn-danger" id="btnDeleteNarrative" style="display: none;">Delete</button>
+                        <button type="button" class="btn-secondary" id="btnCancelNarrative">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Editor (Full Page Overlay) -->
+    <div class="deck-editor settings-editor" id="settingsEditor">
+        <div class="deck-editor-header">
+            <h2>Settings</h2>
+            <button class="deck-editor-close" id="btnCloseSettings">&times;</button>
+        </div>
+        <div class="deck-editor-layout">
+            <div class="deck-collection-area">
+                <div class="settings-section">
+                    <h3>Round Configuration</h3>
+                    <div class="form-section">
+                        <div class="form-row">
+                            <div class="form-group" style="flex: 1;">
+                                <label for="settingRoundName">Round Name</label>
+                                <input type="text" id="settingRoundName" placeholder="e.g., Day, Turn, Round">
+                                <span class="field-hint">What to call each turn (e.g., "Day 1", "Turn 1")</span>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex: 1;">
+                                <label for="settingRoundText">Round Text</label>
+                                <input type="text" id="settingRoundText" placeholder="e.g., A new day begins...">
+                                <span class="field-hint">Message shown when a new turn starts</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bottom Edit Panel (for Resources/Stats) -->
+    <div class="edit-panel" id="editPanel">
+        <div class="edit-panel-header">
+            <h3 id="editPanelTitle">Add Resource</h3>
+            <button class="edit-panel-close" id="btnCloseEditPanel">&times;</button>
+        </div>
+        <div class="edit-panel-body">
+            <div class="form-row">
+                <div class="form-group" style="flex: 2;">
+                    <label for="resNameBottom">Name</label>
+                    <input type="text" id="resNameBottom" placeholder="Name">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label for="resT1Bottom">T1 Value</label>
+                    <input type="number" id="resT1Bottom" placeholder="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex: 1;">
+                    <label for="resChangeBottom">Change</label>
+                    <input type="number" id="resChangeBottom" placeholder="0" step="0.1">
+                </div>
+                <div class="form-group checkbox-group" style="flex: 1;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="resResetEveryTurnBottom">
+                        <span>Reset each turn</span>
+                    </label>
+                </div>
+                <div class="form-group checkbox-group" style="flex: 1;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="resAllowNegativeBottom">
+                        <span>Allow negative</span>
+                    </label>
+                </div>
+                <div class="form-group checkbox-group" style="flex: 1;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="resNegativeIsGoodBottom">
+                        <span>Negative is good</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-row" id="softCapGroupBottom">
+                <div class="form-group" style="flex: 1;">
+                    <label for="resSoftCapBottom">Soft Cap (0 = none)</label>
+                    <input type="number" id="resSoftCapBottom" placeholder="0" min="0">
+                </div>
+                <div class="form-group" style="flex: 1;" id="hardCapGroupBottom">
+                    <label for="resHardCapBottom">Hard Cap (0 = none)</label>
+                    <input type="number" id="resHardCapBottom" placeholder="0" min="0">
+                </div>
+            </div>
+        </div>
+        <div class="edit-panel-actions">
+            <button type="button" class="btn-primary" id="btnSaveBottom">Add</button>
+            <button type="button" class="btn-primary" id="btnUpdateBottom" style="display: none;">Update</button>
+            <button type="button" class="btn-danger" id="btnDeleteBottom" style="display: none;">Delete</button>
+            <button type="button" class="btn-secondary" id="btnCancelBottom">Cancel</button>
+        </div>
+    </div>
+    
+    <!-- Card Album (Browse Collection) -->
+    <div class="deck-editor card-album" id="cardAlbum">
+        <div class="deck-editor-header">
+            <h2>Card Album</h2>
+            <button class="deck-editor-close" id="btnCloseCardAlbum">&times;</button>
+        </div>
+        <div class="deck-editor-layout">
+            <div class="deck-collection-area">
+                <div class="deck-grid" id="cardAlbumGrid">
+                    <!-- All cards shown here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
+    
+    <script src="script.js?v=24"></script>
+</body>
+</html>
