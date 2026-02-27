@@ -79,11 +79,17 @@ const btnAddBuffEffect = document.getElementById('btnAddBuffEffect');
 const resNameBottom = document.getElementById('resNameBottom');
 const resT1Bottom = document.getElementById('resT1Bottom');
 const resChangeBottom = document.getElementById('resChangeBottom');
-const resSoftCapBottom = document.getElementById('resSoftCapBottom');
+const resMaxValueBottom = document.getElementById('resMaxValueBottom');
 const resHardCapBottom = document.getElementById('resHardCapBottom');
+const resMinValueBottom = document.getElementById('resMinValueBottom');
+const resMinHardCapBottom = document.getElementById('resMinHardCapBottom');
 const resResetEveryTurnBottom = document.getElementById('resResetEveryTurnBottom');
 const resAllowNegativeBottom = document.getElementById('resAllowNegativeBottom');
-const resNegativeIsGoodBottom = document.getElementById('resNegativeIsGoodBottom');
+const resColorLogicBottom = document.getElementById('resColorLogicBottom');
+const resCyclicalBottom = document.getElementById('resCyclicalBottom');
+const cyclicalEffectsContainer = document.getElementById('cyclicalEffectsContainer');
+const btnAddCyclicalEffect = document.getElementById('btnAddCyclicalEffect');
+const cyclicalEffectsSection = document.getElementById('cyclicalEffectsSection');
 
 // Toast
 const toast = document.getElementById('toast');
@@ -104,7 +110,17 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-
+    // Render initial turn message if log is empty
+    if (activityLog && activityLog.children.length === 0) {
+        const roundName = getRoundLabel();
+        const roundText = getRoundMessage();
+        activityLog.innerHTML = `
+            <div class="turn-message">
+                <span class="turn-label">${roundName} <span class="turn-number">${currentTurn}</span></span>
+                ${roundText ? `<span class="turn-text">${roundText}</span>` : ''}
+            </div>
+        `;
+    }
     
     // Check buffs FIRST (so cards can reference buff states)
     checkAndActivateBuffs();
@@ -112,6 +128,9 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAndActivateCards();
     // Check narratives for the current turn state
     checkAndDisplayNarratives();
+    
+    // Setup horizontal scroll for cards
+    setupCardsHorizontalScroll();
     
     renderAll();
 });
@@ -164,6 +183,41 @@ function setupEventListeners() {
     on('btnSaveBottom', 'click', saveBottomItem);
     on('btnUpdateBottom', 'click', updateBottomItem);
     on('btnDeleteBottom', 'click', deleteBottomItem);
+    
+    // Show cyclical option when max value is set and hard cap is checked
+    function updateCyclicalVisibility() {
+        const cyclicalGroup = document.getElementById('cyclicalGroupBottom');
+        const hasMaxValue = resMaxValueBottom?.value && parseFloat(resMaxValueBottom.value) > 0;
+        const isHardCap = resHardCapBottom?.checked;
+        
+        if (cyclicalGroup) {
+            cyclicalGroup.style.display = (hasMaxValue && isHardCap) ? 'flex' : 'none';
+        }
+        
+        // Hide effects section if no longer valid
+        if ((!hasMaxValue || !isHardCap) && cyclicalEffectsSection) {
+            cyclicalEffectsSection.style.display = 'none';
+            if (resCyclicalBottom) resCyclicalBottom.checked = false;
+        }
+    }
+    
+    // Show/hide min value row when Allow Negative is toggled
+    function updateMinValueVisibility() {
+        const minValueRow = document.getElementById('minValueRowBottom');
+        if (minValueRow) {
+            minValueRow.style.display = resAllowNegativeBottom?.checked ? 'flex' : 'none';
+        }
+    }
+    
+    if (resMaxValueBottom) {
+        resMaxValueBottom.addEventListener('input', updateCyclicalVisibility);
+    }
+    if (resHardCapBottom) {
+        resHardCapBottom.addEventListener('change', updateCyclicalVisibility);
+    }
+    if (resAllowNegativeBottom) {
+        resAllowNegativeBottom.addEventListener('change', updateMinValueVisibility);
+    }
     
     // Narrative Editor
     on('btnCloseNarrativeEditor', 'click', closeNarrativeEditor);
@@ -270,6 +324,17 @@ function updateBuffTargetDropdowns() {
         const currentValue = select.value;
         select.innerHTML = `
             <option value="">-- Target --</option>
+            <optgroup label="Resources">${resourceOptions}</optgroup>
+            <optgroup label="Stats">${statOptions}</optgroup>
+        `;
+        select.value = currentValue;
+    });
+    
+    // Also refresh conditional target dropdowns
+    buffEffectsContainer.querySelectorAll('.buff-cond-target').forEach(select => {
+        const currentValue = select.value;
+        select.innerHTML = `
+            <option value="">-- Check --</option>
             <optgroup label="Resources">${resourceOptions}</optgroup>
             <optgroup label="Stats">${statOptions}</optgroup>
         `;
@@ -383,57 +448,55 @@ function renderDeckGrid() {
     
     collection.forEach(item => {
         const cardEl = document.createElement('div');
-        cardEl.className = 'deck-card' + (editingId === item.id ? ' selected' : '');
+        
+        // Determine card type for border accent
+        let cardType = 'neutral';
+        if (currentEditType === 'card') {
+            const hasCost = item.costs?.some(c => c.value !== 0);
+            const hasPositiveEffect = item.effects?.some(e => e.value > 0 && e.type !== 'clear_buff');
+            if (hasCost) cardType = 'debuff';
+            else if (hasPositiveEffect) cardType = 'buff';
+        } else {
+            // Buffs - check if mostly positive or negative
+            const netEffect = item.effects?.reduce((sum, e) => sum + (e.value || 0), 0);
+            if (netEffect > 0) cardType = 'buff';
+            else if (netEffect < 0) cardType = 'debuff';
+        }
+        
+        cardEl.className = `deck-card ${cardType}` + (editingId === item.id ? ' selected' : '');
         cardEl.onclick = () => editDeckItem(item.id);
         
-        // Build cost text for cards
-        let costText = '';
-        if (currentEditType === 'card' && item.costs && item.costs.length > 0) {
-            costText = item.costs.map(c => {
-                const val = c.costType === 'percent' ? `${c.value}%` : c.value;
-                const dur = c.duration > 0 ? `/${c.duration}t` : '';
-                return `${c.targetName} ${val}${dur}`;
-            }).join(', ');
-        }
+        // Build stats HTML like action cards
+        const statsHtml = [];
         
-        // Build effect text
-        let effectText = '';
-        if (item.effects && item.effects.length > 0) {
-            if (currentEditType === 'card') {
-                effectText = item.effects.map(eff => {
-                    if (eff.type === 'clear_buff') return `Clear ${eff.buffName}`;
-                    return '';
-                }).filter(Boolean).join(', ');
-            } else {
-                effectText = item.effects.map(eff => {
-                    const val = eff.effectType === 'percent' ? `${eff.value}%` : (eff.value > 0 ? `+${eff.value}` : eff.value);
-                    return `${eff.targetName} ${val}`;
-                }).join(', ');
-            }
-        }
-        
-        // Build trigger text
-        let triggerText = 'Auto';
-        if (item.trigger && item.trigger.conditions && item.trigger.conditions.length > 0) {
-            if (item.trigger.conditions.length === 1) {
-                const cond = item.trigger.conditions[0];
-                switch (cond.type) {
-                    case 'turn': triggerText = `Turn ${cond.value}`; break;
-                    case 'buff_active': triggerText = `Has ${cond.target?.split(':')[1] || 'buff'}`; break;
-                    case 'buff_inactive': triggerText = `No ${cond.target?.split(':')[1] || 'buff'}`; break;
-                    default: triggerText = `${item.trigger.logic}`; break;
-                }
-            } else {
-                triggerText = `${item.trigger.logic} (${item.trigger.conditions.length})`;
-            }
-        }
-        
-        const durationText = currentEditType === 'buff' ? (item.duration === 0 ? 'Permanent' : `${item.duration}t`) : '';
-        
-        // Build display text
-        let displayText = effectText;
-        if (currentEditType === 'card' && costText) {
-            displayText = costText + (effectText ? ' | ' + effectText : '');
+        // For cards: show costs and effects
+        if (currentEditType === 'card') {
+            // Costs - always negative (red)
+            item.costs?.forEach(c => {
+                const val = c.costType === 'percent' ? `${Math.abs(c.value)}%` : Math.abs(c.value);
+                statsHtml.push(`<div class="deck-card-effect"><span class="effect-name">${escapeHtml(c.targetName)}</span><span class="effect-value negative">−${val}</span></div>`);
+            });
+            
+            // Effects (non-clear)
+            item.effects?.filter(e => e.type !== 'clear_buff').forEach(e => {
+                const val = e.effectType === 'percent' ? `${Math.abs(e.value)}%` : Math.abs(e.value);
+                const sign = e.value >= 0 ? '+' : '−';
+                const colorClass = e.value > 0 ? 'positive' : (e.value < 0 ? 'negative' : 'neutral');
+                statsHtml.push(`<div class="deck-card-effect"><span class="effect-name">${escapeHtml(e.targetName)}</span><span class="effect-value ${colorClass}">${sign}${val}</span></div>`);
+            });
+            
+            // Clear buff effects
+            item.effects?.filter(e => e.type === 'clear_buff').forEach(e => {
+                statsHtml.push(`<div class="deck-card-effect"><span class="effect-name">Clear</span><span class="effect-value neutral">${escapeHtml(e.buffName)}</span></div>`);
+            });
+        } else {
+            // For buffs: show effects
+            item.effects?.forEach(e => {
+                const val = e.effectType === 'percent' ? `${Math.abs(e.value)}%` : Math.abs(e.value);
+                const sign = e.value >= 0 ? '+' : '−';
+                const colorClass = e.value > 0 ? 'positive' : (e.value < 0 ? 'negative' : 'neutral');
+                statsHtml.push(`<div class="deck-card-effect"><span class="effect-name">${escapeHtml(e.targetName)}</span><span class="effect-value ${colorClass}">${sign}${val}</span></div>`);
+            });
         }
         
         cardEl.innerHTML = `
@@ -442,12 +505,8 @@ function renderDeckGrid() {
                 <button class="deck-card-delete" onclick="deleteDeckItem(${item.id}, event)">&times;</button>
             </div>
             <div class="deck-card-body">
+                <div class="deck-card-effects">${statsHtml.join('')}</div>
                 <div class="deck-card-desc">${escapeHtml(item.description) || 'No description'}</div>
-                ${displayText ? `<div class="deck-card-effects">${escapeHtml(displayText)}</div>` : ''}
-            </div>
-            <div class="deck-card-footer">
-                <span class="deck-card-trigger">${triggerText}</span>
-                ${durationText ? `<span class="deck-card-duration">${durationText}</span>` : ''}
             </div>
         `;
         
@@ -695,6 +754,7 @@ function updateTriggerCustomTotal() {
 // Expose functions needed for inline event handlers
 window.toggleCardEffectType = toggleCardEffectType;
 window.updateTriggerCustomTotal = updateTriggerCustomTotal;
+window.updateCyclicalTargetOptions = updateCyclicalTargetOptions;
 
 function collectTriggers() {
     const conditions = [];
@@ -855,32 +915,101 @@ function addBuffEffectRow(existingEffect = null) {
         `<option value="stat:${s.name}" ${existingEffect?.targetType === 'stat' && existingEffect?.targetName === s.name ? 'selected' : ''}>${s.name}</option>`
     ).join('');
     
+    // Conditional target options
+    const condTargetOptions = [...resources.map(r => `<option value="resource:${r.name}" ${existingEffect?.condition?.targetType === 'resource' && existingEffect?.condition?.targetName === r.name ? 'selected' : ''}>${r.name}</option>`),
+                              ...stats.map(s => `<option value="stat:${s.name}" ${existingEffect?.condition?.targetType === 'stat' && existingEffect?.condition?.targetName === s.name ? 'selected' : ''}>${s.name}</option>`)].join('');
+    
+    const hasCondition = existingEffect?.condition?.enabled || false;
+    
     row.innerHTML = `
-        <div class="form-group" style="flex: 2;">
-            <select class="buff-effect-target">
-                <option value="">-- Target --</option>
-                <optgroup label="Resources">${resourceOptions}</optgroup>
-                <optgroup label="Stats">${statOptions}</optgroup>
-            </select>
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 8px;">
+            <!-- Main Effect Row -->
+            <div style="display: flex; gap: 6px; align-items: flex-start;">
+                <div class="form-group" style="flex: 2;">
+                    <select class="buff-effect-target">
+                        <option value="">-- Target --</option>
+                        <optgroup label="Resources">${resourceOptions}</optgroup>
+                        <optgroup label="Stats">${statOptions}</optgroup>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <select class="buff-effect-type">
+                        <option value="flat" ${existingEffect?.effectType === 'flat' ? 'selected' : ''}>Flat</option>
+                        <option value="percent" ${existingEffect?.effectType === 'percent' ? 'selected' : ''}>%</option>
+                    </select>
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <input type="number" class="buff-effect-value" placeholder="Val" step="0.01" value="${existingEffect?.value || ''}">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <select class="buff-effect-trigger">
+                        <option value="immediate" ${existingEffect?.trigger === 'immediate' ? 'selected' : ''}>Now</option>
+                        <option value="end_of_round" ${existingEffect?.trigger === 'end_of_round' ? 'selected' : ''}>End Turn</option>
+                    </select>
+                </div>
+                <button type="button" class="btn-remove-row" onclick="this.closest('.effect-row').remove()">&times;</button>
+            </div>
+            
+            <!-- Set as Base Toggle -->
+            <label class="conditional-toggle" style="background: rgba(34, 197, 94, 0.1); border-color: #22c55e; color: #4ade80;">
+                <input type="checkbox" class="buff-effect-setbase-toggle" ${existingEffect?.setBase ? 'checked' : ''}>
+                <span>Set as new base value (buff doesn't compound)</span>
+            </label>
+            
+            <!-- Conditional Toggle -->
+            <label class="conditional-toggle">
+                <input type="checkbox" class="buff-effect-conditional-toggle" ${hasCondition ? 'checked' : ''} onchange="toggleBuffConditional(this)">
+                <span>Add "If" condition</span>
+            </label>
+            
+            <!-- Conditional Section -->
+            <div class="conditional-section ${hasCondition ? '' : 'hidden'}">
+                <div class="conditional-label">Only apply if:</div>
+                <div style="display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap;">
+                    <div class="form-group" style="flex: 2; min-width: 80px;">
+                        <select class="buff-cond-target">
+                            <option value="">-- Check --</option>
+                            <optgroup label="Resources">${resources.map(r => `<option value="resource:${r.name}" ${existingEffect?.condition?.targetType === 'resource' && existingEffect?.condition?.targetName === r.name ? 'selected' : ''}>${r.name}</option>`).join('')}</optgroup>
+                            <optgroup label="Stats">${stats.map(s => `<option value="stat:${s.name}" ${existingEffect?.condition?.targetType === 'stat' && existingEffect?.condition?.targetName === s.name ? 'selected' : ''}>${s.name}</option>`).join('')}</optgroup>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 2; min-width: 100px;">
+                        <select class="buff-cond-operator" onchange="updateBuffCondOperator(this)">
+                            <option value="<" ${existingEffect?.condition?.operator === '<' ? 'selected' : ''}>Less than</option>
+                            <option value=">" ${existingEffect?.condition?.operator === '>' ? 'selected' : ''}>Greater than</option>
+                            <option value="=" ${existingEffect?.condition?.operator === '=' ? 'selected' : ''}>Equal to</option>
+                            <option value="changes" ${existingEffect?.condition?.operator === 'changes' ? 'selected' : ''}>Changes by</option>
+                        </select>
+                    </div>
+                    <div class="form-group buff-cond-value-group" style="flex: 1; min-width: 60px; ${existingEffect?.condition?.operator === 'changes' ? 'display:none;' : ''}">
+                        <input type="number" class="buff-cond-value" placeholder="Value" step="0.01" value="${existingEffect?.condition?.value ?? ''}">
+                    </div>
+                    <div class="form-group buff-cond-change-group" style="flex: 1; min-width: 60px; ${existingEffect?.condition?.operator === 'changes' ? '' : 'display:none;'}">
+                        <input type="number" class="buff-cond-change" placeholder="Change" step="0.01" value="${existingEffect?.condition?.change ?? ''}">
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="form-group" style="flex: 1;">
-            <select class="buff-effect-type">
-                <option value="flat" ${existingEffect?.effectType === 'flat' ? 'selected' : ''}>Flat</option>
-                <option value="percent" ${existingEffect?.effectType === 'percent' ? 'selected' : ''}>%</option>
-            </select>
-        </div>
-        <div class="form-group" style="flex: 1;">
-            <input type="number" class="buff-effect-value" placeholder="Val" step="0.01" value="${existingEffect?.value || ''}">
-        </div>
-        <div class="form-group" style="flex: 1;">
-            <select class="buff-effect-trigger">
-                <option value="immediate" ${existingEffect?.trigger === 'immediate' ? 'selected' : ''}>Now</option>
-                <option value="end_of_round" ${existingEffect?.trigger === 'end_of_round' ? 'selected' : ''}>End Turn</option>
-            </select>
-        </div>
-        <button type="button" class="btn-remove-row" onclick="this.closest('.effect-row').remove()">&times;</button>
     `;
     buffEffectsContainer.appendChild(row);
+}
+
+function toggleBuffConditional(checkbox) {
+    const row = checkbox.closest('.effect-row');
+    const condSection = row.querySelector('.conditional-section');
+    condSection.classList.toggle('hidden', !checkbox.checked);
+}
+
+function updateBuffCondOperator(select) {
+    const row = select.closest('.effect-row');
+    const valueGroup = row.querySelector('.buff-cond-value-group');
+    const changeGroup = row.querySelector('.buff-cond-change-group');
+    const isChangeOperator = select.value === 'changes';
+    
+    // For "changes by" operator, we show the change input and hide the value input
+    // For comparison operators (<, >, =), we show the value input and hide the change input
+    valueGroup.style.display = isChangeOperator ? 'none' : 'block';
+    changeGroup.style.display = isChangeOperator ? 'block' : 'none';
 }
 
 function cancelEdit() {
@@ -1031,11 +1160,40 @@ function collectBuffEffects() {
         const effectType = row.querySelector('.buff-effect-type')?.value || 'flat';
         const value = parseFloat(row.querySelector('.buff-effect-value')?.value) || 0;
         const trigger = row.querySelector('.buff-effect-trigger')?.value || 'immediate';
+        const setBase = row.querySelector('.buff-effect-setbase-toggle')?.checked || false;
+        
+        // Collect conditional data
+        const conditionalToggle = row.querySelector('.buff-effect-conditional-toggle');
+        const hasCondition = conditionalToggle?.checked || false;
+        
+        let condition = null;
+        if (hasCondition) {
+            const condTargetSelect = row.querySelector('.buff-cond-target')?.value || '';
+            const condOperator = row.querySelector('.buff-cond-operator')?.value || '=';
+            const condValue = parseFloat(row.querySelector('.buff-cond-value')?.value) || 0;
+            const condChange = parseFloat(row.querySelector('.buff-cond-change')?.value) || 0;
+            
+            if (condTargetSelect && condTargetSelect.includes(':')) {
+                const [condTargetType, condTargetName] = condTargetSelect.split(':');
+                condition = {
+                    enabled: true,
+                    targetType: condTargetType,
+                    targetName: condTargetName,
+                    operator: condOperator,
+                    value: condValue,
+                    change: condChange
+                };
+            }
+        }
         
         if (targetSelect && targetSelect.includes(':')) {
             const [targetType, targetName] = targetSelect.split(':');
             if (targetType && targetName) {
-                effects.push({ targetType, targetName, effectType, value, trigger });
+                const effect = { targetType, targetName, effectType, value, trigger, setBase };
+                if (condition) {
+                    effect.condition = condition;
+                }
+                effects.push(effect);
             }
         }
     });
@@ -1059,17 +1217,43 @@ function openBottomPanel(type, editId = null) {
     if (btnUpdateBottom) btnUpdateBottom.style.display = editId ? 'block' : 'none';
     if (btnDeleteBottom) btnDeleteBottom.style.display = editId ? 'block' : 'none';
     
-    // Show/hide caps for resources/stats only
-    const softCapGroup = document.getElementById('softCapGroupBottom');
-    const hardCapGroup = document.getElementById('hardCapGroupBottom');
-    const resetGroup = document.getElementById('resetEveryTurnGroupBottom');
-    const allowNegGroup = document.getElementById('allowNegativeGroupBottom');
-    const negGoodGroup = document.getElementById('negativeIsGoodGroupBottom');
-    if (softCapGroup) softCapGroup.style.display = 'flex';
-    if (hardCapGroup) hardCapGroup.style.display = 'flex';
-    if (resetGroup) resetGroup.style.display = 'flex';
-    if (allowNegGroup) allowNegGroup.style.display = type === 'resource' ? 'flex' : 'none';
-    if (negGoodGroup) negGoodGroup.style.display = 'flex';
+    // Show/hide resource-specific options
+    const maxValueGroup = document.getElementById('resMaxValueBottom')?.parentElement;
+    const hardCapCheckbox = document.getElementById('resHardCapBottom')?.parentElement;
+    const minValueRow = document.getElementById('minValueRowBottom');
+    const cyclicalGroup = document.getElementById('cyclicalGroupBottom');
+    
+    if (type === 'resource') {
+        if (maxValueGroup) maxValueGroup.style.display = 'flex';
+        if (hardCapCheckbox) hardCapCheckbox.style.display = 'flex';
+        if (cyclicalGroup) cyclicalGroup.style.display = (resMaxValueBottom?.value > 0 && resHardCapBottom?.checked) ? 'flex' : 'none';
+        // Min value row shown based on allow negative
+        if (minValueRow) minValueRow.style.display = resAllowNegativeBottom?.checked ? 'flex' : 'none';
+    } else {
+        // Stats don't have max value/hard cap/min value
+        if (maxValueGroup) maxValueGroup.style.display = 'none';
+        if (hardCapCheckbox) hardCapCheckbox.style.display = 'none';
+        if (minValueRow) minValueRow.style.display = 'none';
+        if (cyclicalGroup) cyclicalGroup.style.display = 'none';
+    }
+    
+    // Setup cyclical effects section
+    if (type === 'resource') {
+        if (cyclicalEffectsSection) cyclicalEffectsSection.style.display = 'none';
+        if (cyclicalEffectsContainer) cyclicalEffectsContainer.innerHTML = '';
+        
+        if (resCyclicalBottom) {
+            resCyclicalBottom.onchange = (e) => {
+                if (cyclicalEffectsSection) {
+                    cyclicalEffectsSection.style.display = e.target.checked ? 'block' : 'none';
+                }
+            };
+        }
+        
+        if (btnAddCyclicalEffect) {
+            btnAddCyclicalEffect.onclick = () => addCyclicalEffectRow();
+        }
+    }
     
     if (editId) {
         const item = type === 'resource' 
@@ -1079,29 +1263,61 @@ function openBottomPanel(type, editId = null) {
             if (resNameBottom) resNameBottom.value = item.name;
             if (resT1Bottom) resT1Bottom.value = item.baseValue;
             if (resChangeBottom) resChangeBottom.value = item.changePerRound || 0;
-            if (resSoftCapBottom) resSoftCapBottom.value = item.softCap !== null ? item.softCap : '';
-            if (resHardCapBottom) resHardCapBottom.value = item.hardCap !== null ? item.hardCap : '';
+            // Max Value and Hard Cap
+            const maxValue = item.maxValue !== undefined ? item.maxValue :
+                             (item.hardCap !== null && item.hardCap !== undefined ? item.hardCap : 
+                              (item.softCap !== null && item.softCap !== undefined ? item.softCap : ''));
+            if (resMaxValueBottom) resMaxValueBottom.value = maxValue;
+            if (resHardCapBottom) resHardCapBottom.checked = item.isHardCap !== undefined ? item.isHardCap : (item.hardCap !== null && item.hardCap !== undefined);
+            
+            // Min Value and Hard Floor
+            const minValue = item.minValue !== undefined ? item.minValue : '';
+            if (resMinValueBottom) resMinValueBottom.value = minValue;
+            if (resMinHardCapBottom) resMinHardCapBottom.checked = item.isMinHardCap || false;
             if (resResetEveryTurnBottom) resResetEveryTurnBottom.checked = item.resetEveryTurn || false;
             if (resAllowNegativeBottom) resAllowNegativeBottom.checked = item.allowNegative || false;
-            if (resNegativeIsGoodBottom) resNegativeIsGoodBottom.checked = item.negativeIsGood || false;
+            if (resColorLogicBottom) resColorLogicBottom.value = item.colorLogic || 'default';
+            if (resCyclicalBottom) {
+                resCyclicalBottom.checked = item.cyclical || false;
+                if (cyclicalEffectsSection) {
+                    cyclicalEffectsSection.style.display = item.cyclical ? 'block' : 'none';
+                }
+            }
+            // Populate cyclical effects
+            if (cyclicalEffectsContainer && item.cyclicalEffects) {
+                cyclicalEffectsContainer.innerHTML = '';
+                item.cyclicalEffects.forEach(effect => addCyclicalEffectRow(effect));
+            }
         }
     } else {
         if (resNameBottom) resNameBottom.value = '';
         if (resT1Bottom) resT1Bottom.value = '';
         if (resChangeBottom) resChangeBottom.value = '';
-        if (resSoftCapBottom) resSoftCapBottom.value = '';
-        if (resHardCapBottom) resHardCapBottom.value = '';
+        if (resMaxValueBottom) resMaxValueBottom.value = '';
+        if (resHardCapBottom) resHardCapBottom.checked = false;
+        if (resMinValueBottom) resMinValueBottom.value = '';
+        if (resMinHardCapBottom) resMinHardCapBottom.checked = false;
         if (resResetEveryTurnBottom) resResetEveryTurnBottom.checked = false;
         if (resAllowNegativeBottom) resAllowNegativeBottom.checked = false;
-        if (resNegativeIsGoodBottom) resNegativeIsGoodBottom.checked = false;
+        if (resColorLogicBottom) resColorLogicBottom.value = 'default';
+        if (resCyclicalBottom) resCyclicalBottom.checked = false;
+        if (cyclicalEffectsContainer) cyclicalEffectsContainer.innerHTML = '';
+        if (cyclicalEffectsSection) cyclicalEffectsSection.style.display = 'none';
     }
     
     if (editPanel) editPanel.classList.add('visible');
+    
+    // Re-render to add click handlers and drag functionality for editing
+    renderResources();
+    renderStats();
 }
 
 function closeBottomPanel() {
     editPanel.classList.remove('visible');
     bottomEditingId = null;
+    // Re-render to remove click handlers and drag functionality
+    renderResources();
+    renderStats();
 }
 
 function saveBottomItem() {
@@ -1165,12 +1381,105 @@ function createResourceStatItem() {
         baseValue: parseFloat(resT1Bottom.value) || 0,
         currentValue: parseFloat(resT1Bottom.value) || 0,
         changePerRound: parseFloat(resChangeBottom.value) || 0,
-        softCap: resSoftCapBottom.value === '' ? null : parseFloat(resSoftCapBottom.value),
-        hardCap: resHardCapBottom.value === '' ? null : parseFloat(resHardCapBottom.value),
+        maxValue: resMaxValueBottom?.value === '' ? null : parseFloat(resMaxValueBottom?.value || 0),
+        isHardCap: resHardCapBottom?.checked || false,
+        minValue: resAllowNegativeBottom?.checked && resMinValueBottom?.value !== '' ? parseFloat(resMinValueBottom.value) : null,
+        isMinHardCap: resAllowNegativeBottom?.checked && resMinHardCapBottom?.checked || false,
         resetEveryTurn: resResetEveryTurnBottom.checked,
         allowNegative: resAllowNegativeBottom.checked,
-        negativeIsGood: resNegativeIsGoodBottom.checked
+        colorLogic: resColorLogicBottom?.value || 'default',
+        cyclical: resCyclicalBottom?.checked || false,
+        cyclicalEffects: collectCyclicalEffects()
     };
+}
+
+function collectCyclicalEffects() {
+    const effects = [];
+    const rows = cyclicalEffectsContainer?.querySelectorAll('.cyclical-effect-row') || [];
+    rows.forEach(row => {
+        const targetType = row.querySelector('.effect-target-type')?.value;
+        const targetName = row.querySelector('.effect-target-name')?.value;
+        const changeType = row.querySelector('.effect-change-type')?.value || 'flat';
+        const value = parseFloat(row.querySelector('.effect-value')?.value) || 0;
+        const narrativeTitle = row.querySelector('.effect-narrative-title')?.value?.trim();
+        const narrativeDesc = row.querySelector('.effect-narrative-desc')?.value?.trim();
+        const showInNarrative = row.querySelector('.effect-show-in-narrative')?.checked !== false;
+        
+        if (targetName && value !== 0) {
+            effects.push({ targetType, targetName, changeType, value, narrativeTitle, narrativeDesc, showInNarrative });
+        }
+    });
+    return effects;
+}
+
+function addCyclicalEffectRow(existingEffect = null) {
+    if (!cyclicalEffectsContainer) return;
+    
+    const row = document.createElement('div');
+    row.className = 'effect-row cyclical-effect-row';
+    
+    // Build target options
+    const resourceOptions = resources.map(r => 
+        `<option value="${escapeHtml(r.name)}" ${existingEffect?.targetType === 'resource' && existingEffect?.targetName === r.name ? 'selected' : ''}>${escapeHtml(r.name)}</option>`
+    ).join('');
+    const statOptions = stats.map(s => 
+        `<option value="${escapeHtml(s.name)}" ${existingEffect?.targetType === 'stat' && existingEffect?.targetName === s.name ? 'selected' : ''}>${escapeHtml(s.name)}</option>`
+    ).join('');
+    
+    row.innerHTML = `
+        <div style="display: flex; gap: 8px; margin-bottom: 10px; align-items: flex-start;">
+            <div class="form-group" style="flex: 1;">
+                <select class="effect-target-type" onchange="updateCyclicalTargetOptions(this)">
+                    <option value="resource" ${existingEffect?.targetType === 'resource' ? 'selected' : ''}>Resource</option>
+                    <option value="stat" ${existingEffect?.targetType === 'stat' ? 'selected' : ''}>Stat</option>
+                </select>
+            </div>
+            <div class="form-group" style="flex: 2;">
+                <select class="effect-target-name">
+                    <optgroup label="Resources">${resourceOptions}</optgroup>
+                    <optgroup label="Stats">${statOptions}</optgroup>
+                </select>
+            </div>
+            <div class="form-group" style="flex: 1;">
+                <select class="effect-change-type">
+                    <option value="flat" ${existingEffect?.changeType === 'flat' ? 'selected' : ''}>Flat</option>
+                    <option value="percent" ${existingEffect?.changeType === 'percent' ? 'selected' : ''}>%</option>
+                </select>
+            </div>
+            <div class="form-group" style="flex: 1;">
+                <input type="number" class="effect-value" placeholder="Value" step="0.1" value="${existingEffect?.value || ''}">
+            </div>
+            <button type="button" class="btn-remove-row" onclick="this.closest('.cyclical-effect-row').remove()">×</button>
+        </div>
+        <div class="form-group" style="margin-bottom: 8px;">
+            <input type="text" class="effect-narrative-title" placeholder="Narrative title (e.g., 'Another Month Passes')" value="${escapeHtml(existingEffect?.narrativeTitle || '')}" style="width: 100%;">
+        </div>
+        <div class="form-group" style="margin-bottom: 8px;">
+            <textarea class="effect-narrative-desc" placeholder="Narrative description (shown in body)" rows="2" style="width: 100%; resize: vertical;">${escapeHtml(existingEffect?.narrativeDesc || '')}</textarea>
+        </div>
+        <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+                <input type="checkbox" class="effect-show-in-narrative" ${existingEffect?.showInNarrative !== false ? 'checked' : ''}>
+                <span>Show value in description</span>
+            </label>
+        </div>
+    `;
+    
+    cyclicalEffectsContainer.appendChild(row);
+}
+
+function updateCyclicalTargetOptions(select) {
+    const row = select.closest('.cyclical-effect-row');
+    const targetNameSelect = row.querySelector('.effect-target-name');
+    const type = select.value;
+    
+    let options = '<option value="">-- Select --</option>';
+    if (type === 'resource') {
+        options += resources.map(r => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.name)}</option>`).join('');
+    } else {
+        options += stats.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)}</option>`).join('');
+    }
+    targetNameSelect.innerHTML = options;
 }
 
 // ===== Game Logic =====
@@ -1217,7 +1526,7 @@ function playCard(card) {
                         buffDef._manuallyRemoved = true;
                     }
                     
-                    addLogEntry('buff', `${name} removed`);
+                    // Buff ending is already logged by reverseBuffEffects
                 }
             }
         });
@@ -1301,9 +1610,10 @@ function checkCardCosts(card) {
         const target = targetArray.find(t => t.name === cost.targetName);
         if (!target) return false;
         
-        let actualCost = cost.value;
+        // Costs always reduce the resource, so use absolute value
+        let actualCost = Math.abs(cost.value);
         if (cost.costType === 'percent') {
-            actualCost = target.currentValue * (cost.value / 100);
+            actualCost = target.currentValue * (Math.abs(cost.value) / 100);
         }
         
         // Check if would go negative (unless allowed)
@@ -1327,19 +1637,15 @@ function applyCardCosts(card) {
         const target = targetArray.find(t => t.name === cost.targetName);
         if (!target) return;
         
-        let actualCost = cost.value;
-        let costText = `${cost.value > 0 ? '+' : ''}${cost.value}`;
+        // Costs always reduce the resource, so use absolute value
+        let actualCost = Math.abs(cost.value);
         
         if (cost.costType === 'percent') {
-            actualCost = target.currentValue * (cost.value / 100);
-            costText = `${cost.value > 0 ? '+' : ''}${cost.value}%`;
+            actualCost = target.currentValue * (Math.abs(cost.value) / 100);
         }
         
         target.currentValue -= actualCost;
         applyCaps(target);
-        
-        const action = actualCost > 0 ? 'spent' : 'gained';
-        // Cost logged via logChange in calling function
     });
 }
 
@@ -1363,7 +1669,7 @@ function applyDurationCosts(card) {
                     targetType: cost.targetType,
                     targetName: cost.targetName,
                     effectType: cost.costType,
-                    value: -cost.value, // Negative because it's a cost
+                    value: -Math.abs(cost.value), // Always negative because it's a cost
                     trigger: 'end_of_round'
                 }],
                 duration: cost.duration,
@@ -1396,8 +1702,12 @@ function isChangeGood(targetType, targetName, changeValue) {
     const target = targetArray.find(t => t.name === targetName);
     if (!target) return changeValue > 0; // Default: positive is good
     
-    // If negativeIsGood is true, then negative changes are good
-    if (target.negativeIsGood) {
+    // Handle colorLogic setting
+    const colorLogic = target.colorLogic || 'default';
+    if (colorLogic === 'neutral') {
+        return null; // Neutral - no good/bad coloring
+    }
+    if (colorLogic === 'negative_is_good') {
         return changeValue < 0;
     }
     return changeValue > 0;
@@ -1419,13 +1729,17 @@ function logBuffEffect(buffName, detail = '') {
     addLogEntry('buff', buffName);
 }
 
-function logChange(targetType, targetName, change, source = '') {
-    const isGood = isChangeGood(targetType, targetName, change);
-    const { sign, value, className } = formatChange(change, isGood);
+function logChange(targetType, targetName, change, source = '', neutral = false) {
+    const isGood = neutral ? null : isChangeGood(targetType, targetName, change);
+    const { sign, value } = formatChange(change, isGood);
     const logType = targetType === 'resource' ? 'resource-change' : 'stat-change';
     
     const entry = document.createElement('div');
     entry.className = `log-entry ${logType}`;
+    
+    // Neutral forces white color, otherwise use good/bad coloring
+    const className = neutral ? 'change-neutral' : (isGood ? 'change-good' : 'change-bad');
+    
     // Compact: Name Value
     entry.innerHTML = `${targetName} <span class="${className}">${sign}${value}</span>`;
     
@@ -1439,11 +1753,34 @@ function logChange(targetType, targetName, change, source = '') {
     activityLog.prepend(entry);
 }
 
+function logResourceReset(resourceName, resetValue, colorLogic) {
+    const entry = document.createElement('div');
+    entry.className = 'log-entry resource-change';
+    
+    // Only the value gets colored based on colorLogic
+    // The text "reset to" stays default color
+    const isNeutral = colorLogic === 'neutral';
+    const valueClass = isNeutral ? 'change-neutral' : 'change-good';
+    
+    entry.innerHTML = `${resourceName} reset to <span class="${valueClass}">${resetValue}</span>`;
+    
+    // Staggered animation
+    entry.style.animationDelay = `${logAnimationCounter * 0.08}s`;
+    entry.style.opacity = '0';
+    logAnimationCounter++;
+    clearTimeout(logAnimationTimer);
+    logAnimationTimer = setTimeout(() => { logAnimationCounter = 0; }, 500);
+    
+    activityLog.prepend(entry);
+}
+
 // ===== Turn Functions =====
 
 function endTurn() {
-    // Apply end of round buff effects first
-    applyBuffEffects('end_of_round');
+    // Save current values as "previous" for gains/loses condition checks
+    // This must happen before applying buff effects so conditions check against previous turn
+    resources.forEach(r => { r._prevValue = r.currentValue; });
+    stats.forEach(s => { s._prevValue = s.currentValue; });
     
     // Increment turn FIRST (before clearing markers)
     currentTurn++;
@@ -1471,18 +1808,14 @@ function endTurn() {
     });
     // Note: _manuallyRemoved on buffs is NOT cleared here - only on reset
     
-    // Clear narratives from previous turn
-    const narrativeArea = document.getElementById('narrativeArea');
-    if (narrativeArea) narrativeArea.innerHTML = '';
-    
     // Turn message
     const turnMsg = document.createElement('div');
     turnMsg.className = 'turn-message';
     const roundName = getRoundLabel();
     const roundText = getRoundMessage();
     turnMsg.innerHTML = `
-        <span class="turn-label">${roundName} ${currentTurn}</span>
-        <span class="turn-text">${roundText}</span>
+        <span class="turn-label">${roundName} <span class="turn-number">${currentTurn}</span></span>
+        ${roundText ? `<span class="turn-text">${roundText}</span>` : ''}
     `;
     // Animation delay
     turnMsg.style.animationDelay = '0s';
@@ -1496,7 +1829,17 @@ function endTurn() {
         } else if (r.changePerRound !== 0) {
             applyNaturalChange(r);
         }
-        applyCaps(r);
+    });
+    
+    // Handle cyclical resources BEFORE applying caps
+    // This allows resources to exceed caps temporarily and trigger cascades
+    handleCyclicalResources();
+    
+    // Now apply caps to non-cyclical resources
+    resources.forEach(r => {
+        if (!r.cyclical) {
+            applyCaps(r);
+        }
     });
     
     stats.forEach(s => {
@@ -1507,6 +1850,10 @@ function endTurn() {
         }
         applyCaps(s);
     });
+    
+    // Apply end of round buff effects AFTER natural changes
+    // This allows conditions to check if resources changed this turn
+    applyBuffEffects('end_of_round');
     
     // Reapply immediate buff effects after resource resets
     // (buffs with immediate effects need to reapply after their target resources reset)
@@ -1563,11 +1910,16 @@ function endTurn() {
 
 function applyNaturalChange(item) {
     const newValue = item.currentValue + item.changePerRound;
-    if (item.softCap !== null && item.softCap !== undefined) {
-        if (item.changePerRound > 0 && item.currentValue < item.softCap) {
-            item.currentValue = Math.min(newValue, item.softCap);
-        } else if (item.changePerRound < 0 && item.currentValue > item.softCap) {
-            item.currentValue = Math.max(newValue, item.softCap);
+    // Use maxValue as soft cap if not a hard cap and not cyclical
+    const maxValue = item.maxValue !== undefined ? item.maxValue : item.softCap;
+    const isHardCap = item.isHardCap !== undefined ? item.isHardCap : (item.hardCap !== null && item.hardCap !== undefined);
+    
+    if (maxValue !== null && maxValue !== undefined && !isHardCap && !item.cyclical) {
+        // Soft cap behavior - gently push toward cap
+        if (item.changePerRound > 0 && item.currentValue < maxValue) {
+            item.currentValue = Math.min(newValue, maxValue);
+        } else if (item.changePerRound < 0 && item.currentValue > maxValue) {
+            item.currentValue = Math.max(newValue, maxValue);
         } else {
             item.currentValue = newValue;
         }
@@ -1580,11 +1932,136 @@ function applyCaps(item) {
     // Round to 2 decimal places to avoid floating point precision issues
     item.currentValue = Math.round(item.currentValue * 100) / 100;
     
-    if (item.hardCap !== null && item.hardCap !== undefined && item.currentValue > item.hardCap) {
-        item.currentValue = item.hardCap;
+    // Determine max value and whether it's a hard cap
+    const maxValue = item.maxValue !== undefined ? item.maxValue : 
+                     (item.hardCap !== null && item.hardCap !== undefined ? item.hardCap : 
+                      (item.softCap !== null && item.softCap !== undefined ? item.softCap : null));
+    const isHardCap = item.isHardCap !== undefined ? item.isHardCap : 
+                      (item.hardCap !== null && item.hardCap !== undefined);
+    
+    // Upper cap (hard cap only)
+    if (isHardCap && maxValue !== null && maxValue !== undefined && item.currentValue > maxValue) {
+        item.currentValue = maxValue;
     }
-    if (item.allowNegative === false && item.currentValue < 0) {
-        item.currentValue = 0;
+    
+    // Lower cap (negative hard cap / floor)
+    if (item.allowNegative) {
+        const minValue = item.minValue !== undefined ? item.minValue : null;
+        const isMinHardCap = item.isMinHardCap || false;
+        
+        if (isMinHardCap && minValue !== null && minValue !== undefined && item.currentValue < minValue) {
+            item.currentValue = minValue;
+        }
+    } else {
+        // Prevent negative if not allowed
+        if (item.currentValue < 0) {
+            item.currentValue = 0;
+        }
+    }
+}
+
+function handleCyclicalResources() {
+    // Process cyclical resources (Day/Month/Year cascade)
+    // Handles both counting up (1->24) and counting down (24->1)
+    let changed = true;
+    let iterations = 0;
+    const maxIterations = 10;
+    
+    while (changed && iterations < maxIterations) {
+        changed = false;
+        iterations++;
+        
+        resources.forEach(r => {
+            // Determine max value - cyclical requires a max value (hard cap)
+            const maxValue = r.maxValue !== undefined ? r.maxValue : 
+                             (r.hardCap !== null && r.hardCap !== undefined ? r.hardCap : null);
+            if (!r.cyclical || !maxValue) return;
+            
+            let triggered = false;
+            let resetValue = r.baseValue;
+            
+            // Determine reset direction based on changePerRound
+            const isCountingDown = r.changePerRound < 0;
+            
+            if (isCountingDown) {
+                // Counting down: check if value went below 1 (or below minimum)
+                // For Hour 24->1: when it hits 0 or below, reset to max value (24)
+                if (r.currentValue < 1) {
+                    triggered = true;
+                    resetValue = maxValue; // Reset to max value when counting down
+                }
+            } else {
+                // Counting up: check if value exceeded max value
+                if (r.currentValue > maxValue) {
+                    triggered = true;
+                    resetValue = r.baseValue; // Reset to base when counting up
+                }
+            }
+            
+            if (triggered) {
+                r.currentValue = resetValue;
+                changed = true;
+                
+                // Log the reset with proper color logic - only the value gets colored
+                logResourceReset(r.name, resetValue, r.colorLogic);
+                
+                // Process all cyclical effects
+                if (r.cyclicalEffects && r.cyclicalEffects.length > 0) {
+                    r.cyclicalEffects.forEach(effect => {
+                        const targetArray = effect.targetType === 'resource' ? resources : stats;
+                        const target = targetArray.find(t => t.name === effect.targetName);
+                        
+                        if (target) {
+                            let actualChange = effect.value;
+                            
+                            if (effect.changeType === 'percent') {
+                                actualChange = target.currentValue * (effect.value / 100);
+                            }
+                            
+                            target.currentValue += actualChange;
+                            
+                            // Apply caps
+                            if (effect.targetType === 'resource' && !target.cyclical) {
+                                applyCaps(target);
+                            }
+                            
+                            // Determine color based on target's colorLogic setting
+                            const targetForColor = effect.targetType === 'resource' ? resources.find(t => t.name === effect.targetName) : stats.find(t => t.name === effect.targetName);
+                            const colorLogic = targetForColor?.colorLogic || 'default';
+                            const isGood = colorLogic === 'neutral' ? null : isChangeGood(effect.targetType, effect.targetName, actualChange);
+                            
+                            // Log the change - use logChange for proper color coding
+                            logChange(effect.targetType, effect.targetName, actualChange, r.name, colorLogic === 'neutral');
+                            
+                            // Show narrative if title is provided
+                            if (effect.narrativeTitle) {
+                                let valueText = '';
+                                
+                                // Build value text if showInNarrative is checked
+                                if (effect.showInNarrative !== false) {
+                                    const sign = actualChange > 0 ? '+' : '';
+                                    const valueFormatted = parseFloat(actualChange.toFixed(2));
+                                    const className = colorLogic === 'neutral' ? 'change-neutral' : (isGood ? 'change-good' : 'change-bad');
+                                    const typeText = effect.changeType === 'percent' ? '%' : '';
+                                    valueText = ` <span class="${className}">${sign}${valueFormatted}${typeText} ${escapeHtml(effect.targetName)}</span>`;
+                                }
+                                
+                                // Mirror standard narrative cards: just title and text
+                                displayNarrative({
+                                    id: Date.now() + Math.random(),
+                                    name: escapeHtml(effect.narrativeTitle),
+                                    text: effect.narrativeDesc || '',
+                                    valueHtml: valueText, // Separate HTML value to append
+                                    repeatable: true,
+                                    trigger: null,
+                                    hideFooter: true
+                                });
+                            }
+                        }
+                    });
+                }
+            }
+        });
     }
 }
 
@@ -1755,6 +2232,11 @@ function activateBuffFromCollection(buffDef) {
                     
                     // Log with color coding
                     logChange(effect.targetType, effect.targetName, actualChange, buff.name);
+                    
+                    // If setBase is enabled, update the base value to the new current value
+                    if (effect.setBase) {
+                        target.baseValue = target.currentValue;
+                    }
                 } else {
                     addLogEntry('effect', `${effect.targetName} not found`);
                 }
@@ -1774,6 +2256,13 @@ function applyBuffEffects(triggerType) {
         buff.effects.forEach(effect => {
             if (effect.trigger !== triggerType) return;
             
+            // Check condition if present
+            if (effect.condition && effect.condition.enabled) {
+                if (!evaluateBuffCondition(effect.condition)) {
+                    return; // Condition not met, skip this effect
+                }
+            }
+            
             const targetArray = effect.targetType === 'resource' ? resources : stats;
             const target = targetArray.find(t => t.name === effect.targetName);
             
@@ -1791,6 +2280,12 @@ function applyBuffEffects(triggerType) {
                 // Log the actual change with color coding
                 const actualChange = target.currentValue - oldValue;
                 logChange(effect.targetType, effect.targetName, actualChange, buff.name);
+                
+                // If setBase is enabled, update the base value to the new current value
+                // This prevents the buff from compounding each turn
+                if (effect.setBase) {
+                    target.baseValue = target.currentValue;
+                }
             }
         });
         
@@ -1801,6 +2296,49 @@ function applyBuffEffects(triggerType) {
     });
 }
 
+function evaluateBuffCondition(condition) {
+    if (!condition || !condition.enabled) return true;
+    
+    const targetArray = condition.targetType === 'resource' ? resources : stats;
+    const target = targetArray.find(t => t.name === condition.targetName);
+    
+    if (!target) return false;
+    
+    const currentValue = target.currentValue;
+    const conditionValue = condition.value || 0;
+    const conditionChange = condition.change || 0;
+    
+    switch (condition.operator) {
+        case '<':
+            return currentValue < conditionValue;
+        case '>':
+            return currentValue > conditionValue;
+        case '=':
+            return currentValue === conditionValue;
+        case 'changes':
+            // Check if value changed by the specified amount this turn
+            if (target._prevValue !== undefined) {
+                const actualChange = currentValue - target._prevValue;
+                return actualChange === conditionChange;
+            }
+            return false;
+        case 'gains':
+            // Legacy: check if value increased (any positive change)
+            if (target._prevValue !== undefined) {
+                return currentValue > target._prevValue;
+            }
+            return false;
+        case 'loses':
+            // Legacy: check if value decreased (any negative change)
+            if (target._prevValue !== undefined) {
+                return currentValue < target._prevValue;
+            }
+            return false;
+        default:
+            return true;
+    }
+}
+
 function resetTurn() {
     if (currentTurn > 1 && !confirm('Reset to turn 1? Active cards and buffs will be cleared, but your collection is kept.')) {
         return;
@@ -1809,15 +2347,17 @@ function resetTurn() {
     currentTurn = 1;
     turnValue.textContent = currentTurn;
     
-    // Clear log
+    // Clear log and narrative
     const roundName = getRoundLabel();
     const roundText = getRoundMessage();
     activityLog.innerHTML = `
         <div class="turn-message">
-            <span class="turn-label">${roundName} 1</span>
-            <span class="turn-text">${roundText}</span>
+            <span class="turn-label">${roundName} <span class="turn-number">1</span></span>
+            ${roundText ? `<span class="turn-text">${roundText}</span>` : ''}
         </div>
     `;
+    const narrativeArea = document.getElementById('narrativeArea');
+    if (narrativeArea) narrativeArea.innerHTML = '';
     
     // Reset resources/stats
     resources.forEach(r => {
@@ -1833,9 +2373,8 @@ function resetTurn() {
     activeCards = [];
     activeBuffs = [];
     
-    // Clear shown narratives
+    // Clear shown narratives (now in log, will be cleared with log)
     shownNarratives = [];
-    document.getElementById('narrativeArea').innerHTML = '';
     
     // Clear all removal markers (fresh start)
     cardCollection.forEach(c => {
@@ -1876,12 +2415,12 @@ function resetAll() {
     const roundText = getRoundMessage();
     activityLog.innerHTML = `
         <div class="turn-message">
-            <span class="turn-label">${roundName} 1</span>
-            <span class="turn-text">${roundText}</span>
+            <span class="turn-label">${roundName} <span class="turn-number">1</span></span>
+            ${roundText ? `<span class="turn-text">${roundText}</span>` : ''}
         </div>
     `;
-    document.getElementById('narrativeArea').innerHTML = '';
-    
+    const narrativeArea = document.getElementById('narrativeArea');
+    if (narrativeArea) narrativeArea.innerHTML = '';
     localStorage.removeItem(STORAGE_KEY);
     turnValue.textContent = currentTurn;
     renderAll();
@@ -1935,7 +2474,7 @@ function getRoundLabel() {
 }
 
 function getRoundMessage() {
-    return gameSettings.roundText || 'New turn begins...';
+    return gameSettings.roundText || '';
 }
 
 function renderNarrativeGrid() {
@@ -2168,31 +2707,46 @@ function renderCardAlbum() {
     }
     
     grid.innerHTML = cardCollection.map(c => {
-        const costs = c.costs ? c.costs.map(cost => {
-            const targetName = cost.target ? cost.target.split(':')[1] : '?';
-            const sign = cost.value >= 0 ? '-' : '+';
-            const value = Math.abs(cost.value);
-            const suffix = cost.costType === 'percent' ? '%' : '';
-            return `${sign}${value}${suffix} ${targetName}`;
-        }).join(', ') : '';
+        // Determine card type for border accent
+        let cardType = 'neutral';
+        const hasCost = c.costs?.some(cost => cost.value !== 0);
+        const hasPositiveEffect = c.effects?.some(e => e.value > 0 && e.type !== 'clear_buff');
+        if (hasCost) cardType = 'debuff';
+        else if (hasPositiveEffect) cardType = 'buff';
         
-        const effects = c.effects ? c.effects.map(e => {
-            if (e.type === 'clear_buff') {
-                const buffName = e.target ? e.target.split(':')[1] : 'buff';
-                return `Clear ${buffName}`;
-            }
-            return 'Effect';
-        }).join(', ') : '';
+        // Build stats HTML like action cards
+        const statsHtml = [];
+        
+        // Costs - always negative (red)
+        c.costs?.forEach(cost => {
+            const val = cost.costType === 'percent' ? `${Math.abs(cost.value)}%` : Math.abs(cost.value);
+            const targetName = cost.targetName || (cost.target ? cost.target.split(':')[1] : '?');
+            statsHtml.push(`<div class="deck-card-effect"><span class="effect-name">${escapeHtml(targetName)}</span><span class="effect-value negative">−${val}</span></div>`);
+        });
+        
+        // Effects (non-clear)
+        c.effects?.filter(e => e.type !== 'clear_buff').forEach(e => {
+            const val = e.effectType === 'percent' ? `${Math.abs(e.value)}%` : Math.abs(e.value);
+            const sign = e.value >= 0 ? '+' : '−';
+            const colorClass = e.value > 0 ? 'positive' : (e.value < 0 ? 'negative' : 'neutral');
+            const targetName = e.targetName || (e.target ? e.target.split(':')[1] : '?');
+            statsHtml.push(`<div class="deck-card-effect"><span class="effect-name">${escapeHtml(targetName)}</span><span class="effect-value ${colorClass}">${sign}${val}</span></div>`);
+        });
+        
+        // Clear buff effects
+        c.effects?.filter(e => e.type === 'clear_buff').forEach(e => {
+            const buffName = e.buffName || (e.target ? e.target.split(':')[1] : 'buff');
+            statsHtml.push(`<div class="deck-card-effect"><span class="effect-name">Clear</span><span class="effect-value neutral">${escapeHtml(buffName)}</span></div>`);
+        });
         
         return `
-            <div class="card-album-item">
+            <div class="card-album-item ${cardType}">
                 <div class="deck-card-header">
                     <span class="deck-card-name">${escapeHtml(c.name)}</span>
                 </div>
                 <div class="deck-card-body">
+                    <div class="deck-card-effects">${statsHtml.join('')}</div>
                     <div class="deck-card-desc">${escapeHtml(c.description || '')}</div>
-                    ${costs ? `<div class="deck-card-effects">Costs: ${costs}</div>` : ''}
-                    ${effects ? `<div class="deck-card-effects">Effects: ${effects}</div>` : ''}
                 </div>
             </div>
         `;
@@ -2217,26 +2771,54 @@ function checkAndDisplayNarratives() {
                 shownNarratives.push(narrative.id);
             }
             
-            // Display narrative
-            displayNarrative(narrative);
+            // Display narrative (escape the name for user-defined narratives)
+            displayNarrative({
+                ...narrative,
+                name: escapeHtml(narrative.name)
+            });
         }
     });
 }
 
 function displayNarrative(narrative) {
     const narrativeArea = document.getElementById('narrativeArea');
+    if (!narrativeArea) return;
     
     const entry = document.createElement('div');
-    entry.className = 'narrative-entry';
+    entry.className = 'narrative-log-entry';
+    
+    // Format text with paragraph breaks if it contains newlines
+    let formattedText = '';
+    if (narrative.text) {
+        formattedText = escapeHtml(narrative.text)
+            .split('\n')
+            .filter(p => p.trim())
+            .map(p => `<span>${p}</span>`)
+            .join('');
+    }
+    
+    // Append valueHtml if provided (for colored values from cyclical effects)
+    if (narrative.valueHtml) {
+        formattedText += ` ${narrative.valueHtml}`;
+    }
+    
+    // Narrative format: centered title with gradient lines on sides, description below
     entry.innerHTML = `
-        <div class="narrative-text">${escapeHtml(narrative.text)}</div>
-        <div class="narrative-source">— ${escapeHtml(narrative.name)}</div>
+        <div class="narrative-log-header">
+            <span class="narrative-log-title">${escapeHtml(narrative.name)}</span>
+        </div>
+        <span class="narrative-log-text">${formattedText}</span>
     `;
     
-    narrativeArea.appendChild(entry);
-    narrativeArea.scrollTop = narrativeArea.scrollHeight;
+    // Staggered animation like log entries
+    entry.style.animationDelay = `${logAnimationCounter * 0.08}s`;
+    entry.style.opacity = '0';
+    logAnimationCounter++;
+    clearTimeout(logAnimationTimer);
+    logAnimationTimer = setTimeout(() => { logAnimationCounter = 0; }, 500);
     
-    saveState();
+    // Prepend like log (newest at top), don't clear
+    narrativeArea.prepend(entry);
 }
 
 // ===== Storage =====
@@ -2268,21 +2850,25 @@ function exportGameState() {
                 currentValue: r.currentValue,
                 baseValue: r.baseValue,
                 changePerRound: r.changePerRound,
-                softCap: r.softCap,
-                hardCap: r.hardCap,
+                maxValue: r.maxValue,
+                isHardCap: r.isHardCap,
                 resetEveryTurn: r.resetEveryTurn,
                 allowNegative: r.allowNegative,
-                negativeIsGood: r.negativeIsGood
+                minValue: r.minValue,
+                isMinHardCap: r.isMinHardCap,
+                colorLogic: r.colorLogic,
+                cyclical: r.cyclical,
+                cyclicalEffects: r.cyclicalEffects
             })),
             stats: stats.map(s => ({
                 name: s.name,
                 currentValue: s.currentValue,
                 baseValue: s.baseValue,
                 changePerRound: s.changePerRound,
-                softCap: s.softCap,
-                hardCap: s.hardCap,
+                maxValue: s.maxValue,
+                isHardCap: s.isHardCap,
                 resetEveryTurn: s.resetEveryTurn,
-                negativeIsGood: s.negativeIsGood
+                colorLogic: s.colorLogic
             })),
             activeBuffs: activeBuffs.map(b => ({
                 name: b.name,
@@ -2350,6 +2936,58 @@ function loadState() {
         shownNarratives = state.shownNarratives || [];
         gameSettings = state.gameSettings || { roundName: '', roundText: '' };
         
+        // Migrate old negativeIsGood to colorLogic
+        resources.forEach(r => {
+            if (r.negativeIsGood !== undefined) {
+                r.colorLogic = r.negativeIsGood ? 'negative_is_good' : 'default';
+                delete r.negativeIsGood;
+            }
+        });
+        stats.forEach(s => {
+            if (s.negativeIsGood !== undefined) {
+                s.colorLogic = s.negativeIsGood ? 'negative_is_good' : 'default';
+                delete s.negativeIsGood;
+            }
+        });
+        
+        // Migrate old softCap/hardCap to new maxValue/isHardCap format
+        resources.forEach(r => {
+            if (r.maxValue === undefined) {
+                if (r.hardCap !== null && r.hardCap !== undefined) {
+                    r.maxValue = r.hardCap;
+                    r.isHardCap = true;
+                } else if (r.softCap !== null && r.softCap !== undefined) {
+                    r.maxValue = r.softCap;
+                    r.isHardCap = false;
+                } else {
+                    r.maxValue = null;
+                    r.isHardCap = false;
+                }
+            }
+            if (r.minValue === undefined) {
+                r.minValue = null;
+                r.isMinHardCap = false;
+            }
+        });
+        stats.forEach(s => {
+            if (s.maxValue === undefined) {
+                if (s.hardCap !== null && s.hardCap !== undefined) {
+                    s.maxValue = s.hardCap;
+                    s.isHardCap = true;
+                } else if (s.softCap !== null && s.softCap !== undefined) {
+                    s.maxValue = s.softCap;
+                    s.isHardCap = false;
+                } else {
+                    s.maxValue = null;
+                    s.isHardCap = false;
+                }
+            }
+            if (s.minValue === undefined) {
+                s.minValue = null;
+                s.isMinHardCap = false;
+            }
+        });
+        
         // Migrate old trigger format to new format
         [...cardCollection, ...buffCollection].forEach(item => {
             if (!item.trigger && (item.triggerType || item.triggerValue !== undefined)) {
@@ -2396,24 +3034,53 @@ function renderAll() {
     renderBuffs();
 }
 
+function setupCardsHorizontalScroll() {
+    const cardsGrid = document.getElementById('cardsContainer');
+    if (!cardsGrid) return;
+    
+    // Convert vertical scroll to horizontal
+    cardsGrid.addEventListener('wheel', (e) => {
+        if (e.deltaY !== 0) {
+            e.preventDefault();
+            cardsGrid.scrollLeft += e.deltaY;
+        }
+    }, { passive: false });
+}
+
 function renderResources() {
-    resourcesContainer.innerHTML = resources.map(r => `
-        <div class="resource-chip">
+    const isEditorOpen = editPanel?.classList.contains('visible');
+    resourcesContainer.innerHTML = resources.map((r, index) => {
+        const clickHandler = isEditorOpen ? `onclick="openBottomPanel('resource', ${r.id})"` : '';
+        const dragAttrs = isEditorOpen ? `draggable="true" data-id="${r.id}" data-index="${index}" data-type="resource"` : '';
+        return `<div class="resource-chip" ${clickHandler} ${dragAttrs}>
             <span class="label">${escapeHtml(r.name)}</span>
             <span class="value ${r.currentValue < 0 ? 'negative' : ''}">${r.currentValue}</span>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
+    
+    // Setup drag and drop if editor is open
+    if (isEditorOpen) {
+        setupDragAndDrop(resourcesContainer, 'resource');
+    }
 }
 
 function renderStats() {
-    statsContainer.innerHTML = stats.map(s => `
-        <div class="stat-row">
+    const isEditorOpen = editPanel?.classList.contains('visible');
+    statsContainer.innerHTML = stats.map((s, index) => {
+        const clickHandler = isEditorOpen ? `onclick="openBottomPanel('stat', ${s.id})"` : '';
+        const dragAttrs = isEditorOpen ? `draggable="true" data-id="${s.id}" data-index="${index}" data-type="stat"` : '';
+        return `<div class="stat-row" ${clickHandler} ${dragAttrs}>
             <div class="stat-info">
                 <span class="stat-name">${escapeHtml(s.name)}</span>
                 <span class="stat-value">${s.currentValue}${s.softCap !== null ? '/' + s.softCap : ''}</span>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
+    
+    // Setup drag and drop if editor is open
+    if (isEditorOpen) {
+        setupDragAndDrop(statsContainer, 'stat');
+    }
 }
 
 function renderCards() {
@@ -2423,17 +3090,67 @@ function renderCards() {
     }
     
     cardsContainer.innerHTML = activeCards.map(card => {
-        const costs = card.costs?.map(c => {
-            const val = c.costType === 'percent' ? `${c.value}%` : c.value;
-            return `${c.targetName} ${val}`;
-        }).join(', ');
+        // Determine card type accent based on costs/effects
+        let cardType = 'neutral';
+        const hasCost = card.costs?.some(c => c.value !== 0);
+        const hasPositiveEffect = card.effects?.some(e => e.value > 0 && e.type !== 'clear_buff');
+        if (hasCost) cardType = 'debuff';
+        else if (hasPositiveEffect) cardType = 'buff';
+        
+        // Build all stats lines with proper colors
+        const statsHtml = [];
+        
+        // Costs - what you PAY to play the card
+        // Display: "Resource -X" in red (it's a cost you're paying)
+        card.costs?.forEach(c => {
+            const val = c.costType === 'percent' ? `${Math.abs(c.value)}%` : Math.abs(c.value);
+            statsHtml.push(`<div class="card-stat"><span class="stat-name">${escapeHtml(c.targetName)}</span><span class="stat-value negative">−${val}</span></div>`);
+        });
+        
+        // Effects (non-clear) - what happens when you play
+        card.effects?.filter(e => e.type !== 'clear_buff').forEach(e => {
+            const val = e.effectType === 'percent' ? `${Math.abs(e.value)}%` : Math.abs(e.value);
+            const sign = e.value >= 0 ? '+' : '-';
+            const colorClass = e.value > 0 ? 'positive' : (e.value < 0 ? 'negative' : 'neutral');
+            statsHtml.push(`<div class="card-stat"><span class="stat-name">${escapeHtml(e.targetName)}</span><span class="stat-value ${colorClass}">${sign}${val}</span></div>`);
+        });
+        
+        // Reverse effects (what you lose when clearing buffs)
+        // When you clear a buff, you lose its ongoing benefits/penalties
+        const clearBuffEffects = card.effects?.filter(e => e.type === 'clear_buff');
+        if (clearBuffEffects && clearBuffEffects.length > 0) {
+            clearBuffEffects.forEach(clearEffect => {
+                const buffName = clearEffect.buffName;
+                const buff = activeBuffs.find(b => b.name === buffName);
+                if (buff && buff.effects) {
+                    buff.effects.forEach(buffEffect => {
+                        const val = buffEffect.effectType === 'percent' ? `${Math.abs(buffEffect.value)}%` : Math.abs(buffEffect.value);
+                        // When clearing a buff, you LOSE that buff's effect
+                        // If buff gave +85 Money, clearing it means losing 85 Money (red/negative)
+                        // If buff gave -35 Focus, clearing it means gaining 35 Focus (green/positive)
+                        const isBuffPositive = buffEffect.value > 0;
+                        const displaySign = isBuffPositive ? '−' : '+';  // Using actual minus sign
+                        const colorClass = isBuffPositive ? 'negative' : 'positive';
+                        statsHtml.push(`<div class="card-stat"><span class="stat-name">${escapeHtml(buffEffect.targetName)}</span><span class="stat-value ${colorClass}">${displaySign}${val}</span></div>`);
+                    });
+                }
+            });
+        }
+        
+        // Description at bottom
+        const descriptionHtml = card.description 
+            ? `<div class="card-description">${escapeHtml(card.description)}</div>` 
+            : '';
+        
         return `
-            <div class="card" onclick="playCard(activeCards.find(c => c.id === ${card.id}))">
+            <div class="card ${cardType}" onclick="playCard(activeCards.find(c => c.id === ${card.id}))">
                 <div class="card-header">
                     <span class="card-title">${escapeHtml(card.name)}</span>
-                    ${costs ? `<span class="card-cost">${escapeHtml(costs)}</span>` : ''}
                 </div>
-                <div class="card-desc">${escapeHtml(card.description) || ''}</div>
+                <div class="card-stats">
+                    ${statsHtml.join('')}
+                </div>
+                ${descriptionHtml}
             </div>
         `;
     }).join('');
@@ -2443,7 +3160,22 @@ function renderBuffs() {
     buffsContainer.innerHTML = activeBuffs.map(buff => {
         const effects = buff.effects?.map(e => {
             const val = e.effectType === 'percent' ? `${e.value}%` : `${e.value > 0 ? '+' : ''}${e.value}`;
-            return `${e.targetName} ${val}`;
+            
+            // Determine color based on target's colorLogic
+            let colorClass = '';
+            if (e.targetType === 'resource') {
+                const target = resources.find(r => r.name === e.targetName);
+                if (target?.colorLogic === 'neutral') colorClass = 'neutral';
+                else if (target?.colorLogic === 'negative_is_good') colorClass = e.value < 0 ? 'good' : 'bad';
+                else colorClass = e.value > 0 ? 'good' : 'bad';
+            } else {
+                const target = stats.find(s => s.name === e.targetName);
+                if (target?.colorLogic === 'neutral') colorClass = 'neutral';
+                else if (target?.colorLogic === 'negative_is_good') colorClass = e.value < 0 ? 'good' : 'bad';
+                else colorClass = e.value > 0 ? 'good' : 'bad';
+            }
+            
+            return `${e.targetName} <span class="${colorClass}">${val}</span>`;
         }).join(', ');
         const duration = buff.duration > 0 && buff.currentValue !== undefined ? `${buff.currentValue}t` : '∞';
         return `
@@ -2452,10 +3184,91 @@ function renderBuffs() {
                     <span class="buff-name">${escapeHtml(buff.name)}</span>
                     <span class="buff-duration">${duration}</span>
                 </div>
-                <div class="buff-effect">${escapeHtml(effects)}</div>
+                <div class="buff-effect">${effects}</div>
             </div>
         `;
     }).join('');
+}
+
+// ===== Drag and Drop =====
+
+let draggedItem = null;
+let draggedType = null;
+
+function setupDragAndDrop(container, type) {
+    const items = container.querySelectorAll('[draggable="true"]');
+    
+    items.forEach(item => {
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragend', handleDragEnd);
+        item.addEventListener('dragover', handleDragOver);
+        item.addEventListener('drop', handleDrop);
+        item.addEventListener('dragenter', handleDragEnter);
+        item.addEventListener('dragleave', handleDragLeave);
+    });
+}
+
+function handleDragStart(e) {
+    draggedItem = this;
+    draggedType = this.dataset.type;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', this.dataset.id);
+}
+
+function handleDragEnd(e) {
+    this.classList.remove('dragging');
+    draggedItem = null;
+    draggedType = null;
+    
+    // Remove all drag-over styles
+    document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+}
+
+function handleDragEnter(e) {
+    e.preventDefault();
+    if (this !== draggedItem && this.dataset.type === draggedType) {
+        this.classList.add('drag-over');
+    }
+}
+
+function handleDragLeave(e) {
+    this.classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    this.classList.remove('drag-over');
+    
+    if (this === draggedItem || this.dataset.type !== draggedType) return;
+    
+    const fromIndex = parseInt(draggedItem.dataset.index);
+    const toIndex = parseInt(this.dataset.index);
+    
+    if (draggedType === 'resource') {
+        // Reorder resources array
+        const [moved] = resources.splice(fromIndex, 1);
+        resources.splice(toIndex, 0, moved);
+    } else if (draggedType === 'stat') {
+        // Reorder stats array
+        const [moved] = stats.splice(fromIndex, 1);
+        stats.splice(toIndex, 0, moved);
+    }
+    
+    // Save and re-render
+    saveState();
+    renderAll();
+    
+    // Re-setup drag and drop since elements were recreated
+    if (editPanel?.classList.contains('visible')) {
+        if (draggedType === 'resource') setupDragAndDrop(resourcesContainer, 'resource');
+        if (draggedType === 'stat') setupDragAndDrop(statsContainer, 'stat');
+    }
 }
 
 // ===== Utilities =====

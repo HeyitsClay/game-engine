@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0a0a0f">
-    <title>Go-DJ Command Interface</title>
-    <link rel="stylesheet" href="style.css?v=24">
+    <title>Game Engine</title>
+    <link rel="stylesheet" href="style.css?v=1011">
 </head>
 <body>
     <div class="app" id="mainApp">
@@ -14,7 +14,7 @@
             <div class="top-bar-main">
                 <button class="btn-reset-soft" id="btnResetSoft" title="Reset Turn">↺</button>
                 <button class="btn-reset" id="btnReset" title="Reset All">↻</button>
-                <div class="player-name">Player Name</div>
+                <div class="player-name"></div>
                 
                 <!-- Resources Container -->
                 <div class="resources-container" id="resourcesContainer">
@@ -25,7 +25,6 @@
                     <button class="btn-add" id="btnAddResource" title="Add Resource">+</button>
                     <button class="btn-clipboard" id="btnExport" title="Export Game State">📋</button>
                     <button class="btn-settings" id="btnSettings" title="Settings">⚙️</button>
-                    <button class="btn-end-turn" id="btnEndTurn">End Turn</button>
                     <div class="turn-counter">Turn: <span id="turnValue">1</span></div>
                 </div>
             </div>
@@ -44,7 +43,7 @@
                 </div>
             </div>
             
-            <!-- Center: Activity Log + Narrative + Cards Area -->
+            <!-- Center: Activity Log + Events + Actions + Cards Area -->
             <div class="section center-section">
                 <div class="log-narrative-container">
                     <div class="activity-log-wrapper">
@@ -53,15 +52,11 @@
                         </div>
                         <div class="activity-log" id="activityLog">
                             <!-- Turn messages appear here -->
-                            <div class="turn-message">
-                                <span class="turn-label">Day 1</span>
-                                <span class="turn-text">A new day begins...</span>
-                            </div>
                         </div>
                     </div>
                     <div class="narrative-wrapper">
                         <div class="section-header">
-                            <h2>Narrative</h2>
+                            <h2>Events</h2>
                             <button class="btn-section-add" id="btnAddNarrative" title="Open Narrative Editor">+</button>
                         </div>
                         <div class="narrative-area" id="narrativeArea">
@@ -69,14 +64,20 @@
                         </div>
                     </div>
                 </div>
-                <div class="cards-area">
-                    <div class="cards-area-header">
-                        <h3>Available Cards</h3>
-                        <button class="btn-section-add" id="btnAddCard" title="Open Card Deck">+</button>
-                    </div>
+                
+                <!-- Actions Bar with End Turn -->
+                <div class="actions-bar">
+                    <h3>Actions</h3>
+                    <button class="btn-end-turn" id="btnEndTurn">End Turn</button>
+                    <button class="btn-section-add" id="btnAddCard" title="Open Card Deck">+</button>
+                </div>
+                
+                <!-- Cards Container with wrapping and scroll -->
+                <div class="cards-container">
                     <div class="cards-grid" id="cardsContainer">
                         <!-- Action cards will be added here -->
                     </div>
+                    <div class="cards-fade"></div>
                 </div>
             </div>
             
@@ -342,49 +343,87 @@
             <button class="edit-panel-close" id="btnCloseEditPanel">&times;</button>
         </div>
         <div class="edit-panel-body">
+            <!-- Row 1: Name, Start Value, Color Logic -->
             <div class="form-row">
                 <div class="form-group" style="flex: 2;">
                     <label for="resNameBottom">Name</label>
                     <input type="text" id="resNameBottom" placeholder="Name">
                 </div>
                 <div class="form-group" style="flex: 1;">
-                    <label for="resT1Bottom">T1 Value</label>
+                    <label for="resT1Bottom">Start Value</label>
                     <input type="number" id="resT1Bottom" placeholder="0">
                 </div>
+                <div class="form-group" style="flex: 1;">
+                    <label for="resColorLogicBottom">Color Logic</label>
+                    <select id="resColorLogicBottom">
+                        <option value="default">Default (positive is good)</option>
+                        <option value="negative_is_good">Negative is good</option>
+                        <option value="neutral">Always neutral</option>
+                    </select>
+                </div>
             </div>
+            
+            <!-- Row 2: Change Per Turn and Max Value -->
             <div class="form-row">
                 <div class="form-group" style="flex: 1;">
-                    <label for="resChangeBottom">Change</label>
+                    <label for="resChangeBottom">Change Per Turn</label>
                     <input type="number" id="resChangeBottom" placeholder="0" step="0.1">
                 </div>
-                <div class="form-group checkbox-group" style="flex: 1;">
+                <div class="form-group" style="flex: 1;">
+                    <label for="resMaxValueBottom">Max Value (0 = none)</label>
+                    <input type="number" id="resMaxValueBottom" placeholder="0">
+                </div>
+                <div class="form-group checkbox-group" style="flex: 0 0 auto; min-width: 100px;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="resHardCapBottom">
+                        <span>Hard Cap</span>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Row 3: Min Value (shown when Allow Negative is checked) -->
+            <div class="form-row" id="minValueRowBottom" style="display: none;">
+                <div class="form-group" style="flex: 1;">
+                    <label for="resMinValueBottom">Min Value (negative)</label>
+                    <input type="number" id="resMinValueBottom" placeholder="0" max="0">
+                </div>
+                <div class="form-group checkbox-group" style="flex: 0 0 auto; min-width: 120px;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="resMinHardCapBottom">
+                        <span>Hard Floor</span>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Row 4: Options -->
+            <div class="form-row options-row">
+                <div class="form-group checkbox-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="resResetEveryTurnBottom">
                         <span>Reset each turn</span>
                     </label>
                 </div>
-                <div class="form-group checkbox-group" style="flex: 1;">
+                <div class="form-group checkbox-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="resAllowNegativeBottom">
                         <span>Allow negative</span>
                     </label>
                 </div>
-                <div class="form-group checkbox-group" style="flex: 1;">
+                <div class="form-group checkbox-group" id="cyclicalGroupBottom" style="display: none;">
                     <label class="checkbox-label">
-                        <input type="checkbox" id="resNegativeIsGoodBottom">
-                        <span>Negative is good</span>
+                        <input type="checkbox" id="resCyclicalBottom">
+                        <span>Cyclical (resets on cap)</span>
                     </label>
                 </div>
             </div>
-            <div class="form-row" id="softCapGroupBottom">
-                <div class="form-group" style="flex: 1;">
-                    <label for="resSoftCapBottom">Soft Cap (0 = none)</label>
-                    <input type="number" id="resSoftCapBottom" placeholder="0" min="0">
+            
+            <!-- Cyclical Effects Section -->
+            <div class="form-section" id="cyclicalEffectsSection" style="display: none;">
+                <label class="section-label">On Reset Effects</label>
+                <div id="cyclicalEffectsContainer">
+                    <!-- Effect rows will be added here -->
                 </div>
-                <div class="form-group" style="flex: 1;" id="hardCapGroupBottom">
-                    <label for="resHardCapBottom">Hard Cap (0 = none)</label>
-                    <input type="number" id="resHardCapBottom" placeholder="0" min="0">
-                </div>
+                <button type="button" class="btn-add-row" id="btnAddCyclicalEffect">+ Add Effect</button>
             </div>
         </div>
         <div class="edit-panel-actions">
@@ -413,6 +452,6 @@
     <!-- Toast Notification -->
     <div class="toast" id="toast"></div>
     
-    <script src="script.js?v=24"></script>
+    <script src="script.js?v=1011"></script>
 </body>
 </html>
